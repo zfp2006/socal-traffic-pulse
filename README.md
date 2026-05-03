@@ -1,10 +1,11 @@
-SoCal Pulse: Freight & Traffic Intelligence
-
+**SoCal Pulse: Freight & Traffic Intelligence
+**
 SoCal Pulse is an interactive, high-fidelity geospatial dashboard designed to visualize the dual-heartbeat of Southern California’s infrastructure: Passenger Congestion and Freight Flow.
 
 By merging Caltrans Performance Measurement System (PeMS) data with OpenStreetMap (OSM) geometries, this tool allows users to identify critical bottlenecks and high-intensity freight corridors across eight counties in real-time.
 
-Key Features
+**Key Features
+**
 Synchronized Geospatial Mapping: Leverages D3.js and GeoJSON to project complex freeway geometries with dynamic stroke-weight scaling based on lane counts.
 
 System-Wide Treemap: A macro-view of the entire SoCal network where area represents total traffic volume and color represents intensity.
@@ -13,7 +14,8 @@ Bi-Metric Intelligence: Instantly toggle between Congestion Intensity (Total Vol
 
 Cross-Component Interaction: Hovering over a freeway segment or clicking a bar chart entry triggers global state updates, highlighting the selected route across the entire dashboard.
 
-The Tech Stack
+**The Tech Stack
+**
 Frontend: React 18, Next.js (App Router), Tailwind CSS
 
 Data Visualization: D3.js (v7)
@@ -22,7 +24,8 @@ Data Pipeline: Python, Pandas, GeoPandas (for CRS transformation and data cleani
 
 Deployment: Vercel
 
-The Data Pipeline
+**The Data Pipeline
+**
 The data architecture follows a "Clean-to-Edge" philosophy to ensure fast load times despite complex geometries.
 
 Extraction: Scraped freeway geometries from OpenStreetMap using osmnx.
@@ -33,7 +36,8 @@ Optimization: Converted coordinates from UTM/State Plane to WGS84 (EPSG:4326) fo
 
 Serving: The processed REAL_LANES_SoCal_Pulse.geojson is served via the Next.js public directory, allowing for efficient asynchronous fetching by the client-side D3 components.
 
-Installation & Setup
+**Installation & Setup
+**
 Clone the repository:
 
 Bash
