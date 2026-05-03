@@ -1,4 +1,5 @@
 SoCal Pulse: Freight & Traffic Intelligence
+
 SoCal Pulse is an interactive, high-fidelity geospatial dashboard designed to visualize the dual-heartbeat of Southern California’s infrastructure: Passenger Congestion and Freight Flow.
 
 By merging Caltrans Performance Measurement System (PeMS) data with OpenStreetMap (OSM) geometries, this tool allows users to identify critical bottlenecks and high-intensity freight corridors across eight counties in real-time.
