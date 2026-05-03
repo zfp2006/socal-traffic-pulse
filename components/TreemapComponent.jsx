@@ -2,170 +2,113 @@
 import { useRef, useEffect, useState } from 'react';
 import * as d3 from 'd3';
 
-export default function TreemapComponent({ data, activeMetric }) {
+export default function TreemapComponent({ data, activeMetric, selectedRoute, setSelectedRoute }) {
   const svgRef = useRef();
-  // React State for our Tooltip (consistent with MapComponent style)
   const [tooltip, setTooltip] = useState({ visible: false, x: 0, y: 0, content: null });
 
   useEffect(() => {
-    if (!data || !data.features) return;
+    if (!data || !data.features || !svgRef.current) return;
 
-    // ==========================================
-    // 1. DATA WRANGLING & HIERARCHY
-    // ==========================================
-
-    // Filter features that have valid traffic volume (AADT) and geo info
+    // 1. DATA WRANGLING
+    // Flattening the hierarchy to just be "Root -> Routes"
     const validData = data.features
       .map(f => f.properties)
-      .filter(d => d.AHEAD_AADT != null && d.CNTY && d.RTE_str);
+      .filter(d => d.AHEAD_AADT != null && d.RTE_str && d[activeMetric] != null);
 
-    // Group data by County then by Route string
-    const groupedData = d3.group(validData, d => d.CNTY, d => d.RTE_str);
+    const routeGroups = d3.rollups(
+      validData,
+      v => ({
+        value: d3.sum(v, s => s.AHEAD_AADT),
+        metricValue: d3.mean(v, s => s[activeMetric]),
+        counties: Array.from(new Set(v.map(s => s.CNTY))).join(', ')
+      }),
+      d => d.RTE_str
+    );
 
-    // Transform Map structure into D3 hierarchy JSON format
     const hierarchicalData = {
-      name: "Southern California",
-      children: Array.from(groupedData, ([county, routes]) => ({
-        name: county,
-        children: Array.from(routes, ([route, segments]) => ({
-          name: `RTE ${route}`,
-          children: segments.map(seg => ({
-            name: `PM ${seg.POSTMILE || 'N/A'}`,
-            value: seg.AHEAD_AADT, // Size mapped to Traffic Volume
-            metricValue: seg[activeMetric] || 0, // Color mapped to active metric
-            raw: seg
-          }))
-        }))
+      name: "SoCal Routes",
+      children: routeGroups.map(([route, stats]) => ({
+        name: `Rte ${route}`,
+        routeId: route,
+        ...stats
       }))
     };
 
-    // ==========================================
-    // 2. SVG SETUP
-    // ==========================================
-    const width = 800;
-    const height = 500;
-    const svg = d3.select(svgRef.current).attr('viewBox', `0 0 ${width} ${height}`);
+    // 2. SETUP SVG
+    const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
+    const { width, height } = svgRef.current.getBoundingClientRect();
 
-    // Setup color scale based on active metric (Red for Congestion, Blue for Freight)
-    const domainMax = activeMetric === 'congestion_intensity'
-      ? d3.max(validData, d => d.congestion_intensity)
-      : 0.25;
-    const colorScale = activeMetric === 'congestion_intensity'
-      ? d3.scaleSequential(d3.interpolateYlOrRd).domain([0, domainMax])
-      : d3.scaleSequential(t => d3.interpolateBlues(0.2 + 0.8 * t)).domain([0, domainMax]);
-
-    // ==========================================
-    // 3. TREEMAP LAYOUT
-    // ==========================================
     const root = d3.hierarchy(hierarchicalData)
       .sum(d => d.value)
       .sort((a, b) => b.value - a.value);
 
     d3.treemap()
       .size([width, height])
-      .paddingOuter(2)
-      .paddingTop(d => d.depth === 1 ? 20 : 2)
-      .paddingInner(1)
-      .round(true)
-      (root);
+      .padding(2)
+      .round(true)(root);
 
-    // ==========================================
-    // 4. RENDERING ELEMENTS
-    // ==========================================
+    // 3. SCALES
+    const metricValues = root.leaves().map(d => d.data.metricValue);
+    const colorScale = d3.scaleSequential(
+      activeMetric === 'congestion_intensity' ? d3.interpolateYlOrRd : d3.interpolateBlues
+    ).domain([0, activeMetric === 'freight_ratio' ? 0.20 : d3.quantile(metricValues.sort(d3.ascending), 0.95) || 1])
+     .clamp(true);
 
-    // Draw leaf nodes (Specific Highway Segments)
-    const leaf = svg.selectAll('.leaf')
+    // 4. DRAWING
+    const leaf = svg.selectAll('g')
       .data(root.leaves())
       .join('g')
       .attr('transform', d => `translate(${d.x0},${d.y0})`);
 
     leaf.append('rect')
-      .attr('width', d => Math.max(0, d.x1 - d.x0))
-      .attr('height', d => Math.max(0, d.y1 - d.y0))
-      .attr('fill', d => {
-        const rawValue = d.data.raw[activeMetric];
-        // if (rawValue === null || rawValue === undefined) {
-        //   return '#374151';
-        // }
-        return colorScale(d.data.metricValue);
+      .attr('class', 'treemap-rect cursor-pointer transition-opacity duration-300')
+      .attr('width', d => d.x1 - d.x0)
+      .attr('height', d => d.y1 - d.y0)
+      .attr('fill', d => colorScale(d.data.metricValue))
+      .attr('stroke', '#111827')
+      .attr('opacity', d => !selectedRoute || d.data.routeId === selectedRoute ? 1 : 0.15)
+      .on('mousemove', (event, d) => {
+        setTooltip({ visible: true, x: event.clientX, y: event.clientY, content: d.data });
       })
-      .attr('stroke', '#1f2937')
-      .attr('stroke-width', 0.5)
-      .on('mouseover', (event, d) => {
-        d3.select(event.currentTarget).attr('stroke', '#ffffff').attr('stroke-width', 2);
-        setTooltip({
-          visible: true,
-          x: event.clientX,
-          y: event.clientY,
-          content: d.data.raw
-        });
-      })
-      .on('mousemove', (event) => {
-        setTooltip(prev => ({ ...prev, x: event.clientX, y: event.clientY }));
-      })
-      .on('mouseout', (event) => {
-        d3.select(event.currentTarget).attr('stroke', '#1f2937').attr('stroke-width', 0.5);
-        setTooltip({ visible: false, x: 0, y: 0, content: null });
+      .on('mouseleave', () => setTooltip(prev => ({ ...prev, visible: false })))
+      .on('click', (event, d) => {
+        setSelectedRoute(prev => prev === d.data.routeId ? null : d.data.routeId);
       });
 
-    // Add labels for larger rectangles
     leaf.append('text')
-      .attr('x', 3)
-      .attr('y', 12)
-      .attr('font-size', '9px')
-      .attr('fill', '#ffffff')
-      .style('pointer-events', 'none')
-      .text(d => {
-        const w = d.x1 - d.x0;
-        const h = d.y1 - d.y0;
-        return (w > 45 && h > 20) ? d.parent.data.name : '';
-      });
-
-    // Draw County headers
-    svg.selectAll('.county-label')
-      .data(root.descendants().filter(d => d.depth === 1))
-      .join('text')
-      .attr('x', d => d.x0 + 5)
-      .attr('y', d => d.y0 + 15)
-      .attr('font-size', '12px')
+      .attr('x', 5)
+      .attr('y', 15)
+      .attr('fill', 'white')
+      .attr('font-size', '11px')
       .attr('font-weight', 'bold')
-      .attr('fill', '#9ca3af')
-      .text(d => d.data.name);
+      .style('pointer-events', 'none')
+      .text(d => (d.x1 - d.x0 > 40 && d.y1 - d.y0 > 20) ? d.data.name : "");
 
-  }, [data, activeMetric]);
+  }, [data, activeMetric, selectedRoute]);
 
   return (
-    <div className="relative w-full h-full bg-gray-900 rounded-lg p-2">
-      <div className="text-center font-bold text-gray-300 text-sm mb-2 uppercase tracking-wider">
-        Volume Hierarchy: {activeMetric === 'congestion_intensity' ? 'Congestion Intensity' : 'Freight Ratio'}
+    <div className="w-full h-full relative flex flex-col">
+      <div className="font-bold text-gray-300 text-xs mb-2 uppercase tracking-widest flex justify-between">
+        <span>Route Volume Map (Size = Traffic, Color = Intensity)</span>
+      </div>
+      <div className="flex-1 min-h-0 bg-gray-900 rounded-lg overflow-hidden border border-gray-700">
+        <svg ref={svgRef} className="w-full h-full block" />
       </div>
 
-      <svg ref={svgRef} className="w-full h-[calc(100%-2rem)] block" />
-
-      {/* Tooltip Overlay */}
-      {tooltip.visible && tooltip.content && (
-        <div
-          className="fixed z-50 bg-gray-800 border border-gray-600 text-white p-3 rounded shadow-lg pointer-events-none transform -translate-x-1/2 -translate-y-full mb-4"
-          style={{ left: tooltip.x, top: tooltip.y - 10 }}
+      {tooltip.visible && (
+        <div 
+          className="fixed z-50 bg-gray-800 border border-gray-600 text-white p-2 rounded shadow-xl pointer-events-none text-xs"
+          style={{ left: tooltip.x + 10, top: tooltip.y - 20 }}
         >
-          <div className="font-bold border-b border-gray-600 pb-1 mb-1">
-            Route {tooltip.content.RTE_str} ({tooltip.content.CNTY})
+          <div className="font-bold border-b border-gray-600 mb-1">{tooltip.content.name}</div>
+          <div>Vol: <span className="text-gray-300 font-mono">{d3.format(',')(Math.round(tooltip.content.value))}</span></div>
+          <div>{activeMetric === 'freight_ratio' ? 'Freight' : 'Congestion'}: 
+            <span className="text-gray-300 font-mono ml-1">
+              {activeMetric === 'freight_ratio' ? (tooltip.content.metricValue * 100).toFixed(1) + '%' : Math.round(tooltip.content.metricValue)}
+            </span>
           </div>
-          <div className="text-sm">
-            <span className="text-gray-400">Postmile:</span> {tooltip.content.POSTMILE || 'N/A'}
-          </div>
-          <div className="text-sm">
-            <span className="text-gray-400">AADT (Volume):</span> {d3.format(',')(tooltip.content.AHEAD_AADT)}
-          </div>
-          <div className="text-sm">
-            <span className="text-gray-400">
-              {activeMetric === 'congestion_intensity' ? 'Congestion:' : 'Freight %:'}
-            </span>{' '}
-            {activeMetric === 'congestion_intensity'
-              ? Math.round(tooltip.content.congestion_intensity)
-              : d3.format('.1%')(tooltip.content.freight_ratio || 0)}
-          </div>
+          <div className="text-[10px] text-gray-500 mt-1 italic">Counties: {tooltip.content.counties}</div>
         </div>
       )}
     </div>

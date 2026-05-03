@@ -1,7 +1,7 @@
 import pandas as pd
 import geopandas as gpd
 import osmnx as ox
-from shapely.geometry import Point
+from shapely.geometry import Point, LineString
 import os
 
 custom_agent = "SoCalTrafficPulse/1.0"
@@ -46,6 +46,7 @@ else:
         "Imperial County, California, USA",
         "Santa Barbara County, California, USA"
     ]
+    # FIX 1: Strict regex anchors to prevent snapping to 1-lane off-ramps!
     custom_filter = '["highway"~"^motorway$|^trunk$"]'
     all_edges = []
     
@@ -59,14 +60,12 @@ else:
             print(f"     Failed: {e}")
             
     edges = pd.concat(all_edges)
-    edges = edges.reset_index() # Fixes the MultiIndex bug!
+    edges = edges.reset_index() 
     
-    # Clean the lanes BEFORE saving the cache!
     print("3. Cleaning the real lane numbers...")
     edges['lanes_clean'] = edges['lanes'].apply(clean_lanes)
     edges['total_lanes'] = edges['lanes_clean'] * 2 
     
-    # Now it's safe to drop list columns and save the cache
     cols_to_drop = [c for c in edges.columns if edges[c].apply(lambda x: isinstance(x, list)).any()]
     edges_cache = edges.drop(columns=cols_to_drop)
     edges_cache.to_file(cache_file, driver="GeoJSON")
@@ -78,25 +77,87 @@ edges_proj = edges.to_crs("EPSG:32611")
 
 final_gdf = gpd.sjoin_nearest(caltrans_proj, edges_proj, how="left", distance_col="dist_meters")
 
-print("5. Calculating accurate Congestion Intensity...")
+print("5. Smoothing Lane Counts to Fix Oscillations...")
 
 major_routes = ['5', '10', '15', '101', '110', '405', '210', '605', '710', '805', '91', '60']
 
-# If it's a major artery and OSM claims it's less than 6 lanes, force it to 6
 mask_major = (final_gdf['RTE_str'].astype(str).isin(major_routes)) & (final_gdf['total_lanes'] < 6)
 final_gdf.loc[mask_major, 'total_lanes'] = 6
-
-# Ensure no other Caltrans highway drops below 4 lanes due to a bad OSM snap
 final_gdf.loc[final_gdf['total_lanes'] < 4, 'total_lanes'] = 4
 
-final_gdf['congestion_intensity'] = final_gdf['AHEAD_AADT'] / final_gdf['total_lanes']
-
+# Crucial: Sort sequentially before we attempt to smooth the data
 final_gdf = final_gdf.sort_values(by=['RTE_str', 'CNTY', 'PM'])
 
-cols_to_keep = ['OBJECTID', 'CNTY', 'RTE_str', 'POSTMILE', 'AHEAD_AADT', 
-                'TOT_TRK_AADT', 'freight_ratio', 'total_lanes', 'congestion_intensity', 'geometry']
+# FIX 1: Apply a rolling median to the lane counts! 
+# This smooths out OSM's hyper-detailed turn lanes and missing data,
+# preventing the lane count from randomly jumping from 10 to 6 and back.
+final_gdf['total_lanes'] = final_gdf.groupby(['RTE_str', 'CNTY'])['total_lanes'].transform(
+    lambda x: x.rolling(window=5, center=True, min_periods=1).median()
+)
 
-final_export = final_gdf[cols_to_keep].to_crs("EPSG:4326")
+# Now calculate congestion using the *smoothed* lane counts
+final_gdf['congestion_intensity'] = final_gdf['AHEAD_AADT'] / final_gdf['total_lanes']
+
+
+print("6. Loading Official Highway Shapefile for True Geometry...")
+shn_gdf = gpd.read_file("SHN_Lines.shp")
+shn_gdf = shn_gdf[shn_gdf['AlignCode'] == 'Right']
+# Robustly find the correct Route column in the shapefile
+route_candidates = [c for c in shn_gdf.columns if c.upper() in ['ROUTE', 'RTE', 'RT']]
+route_col = route_candidates[0] if route_candidates else [c for c in shn_gdf.columns if 'route' in c.lower() or 'rte' in c.lower()][0]
+
+# Helper function to guarantee matching formats (turns "005", "5.0", and 5 into "5")
+def clean_route_num(val):
+    v = str(val).strip()
+    if '.' in v:
+        v = v.split('.')[0] # Chop off the decimal and anything after it
+    return v.lstrip('0')    # Strip leading zeros
+
+# Apply the cleaner to BOTH datasets so they speak the same language
+shn_gdf['RTE_str'] = shn_gdf[route_col].apply(clean_route_num)
+
+shn_proj = shn_gdf.to_crs("EPSG:32611")
+final_gdf_proj = final_gdf.to_crs("EPSG:32611") 
+
+# Clean the traffic data routes too just in case!
+final_gdf_proj['RTE_str'] = final_gdf_proj['RTE_str'].apply(clean_route_num)
+
+cols_to_drop = [c for c in ['index_left', 'index_right'] if c in final_gdf_proj.columns]
+if cols_to_drop:
+    final_gdf_proj = final_gdf_proj.drop(columns=cols_to_drop)
+
+print("7. Conflating Data onto Real Highway Lines...")
+matched_segments = []
+
+for rte, group in final_gdf_proj.groupby('RTE_str'):
+    # Get all segments for this route from the shapefile
+    shn_route = shn_proj[shn_proj['RTE_str'] == rte].copy()
+    
+    if shn_route.empty: 
+        print(f"  -> Warning: Could not find Route {rte} in the shapefile.")
+        continue
+        
+    if 'Right' in shn_route['AlignCode'].values:
+        shn_route = shn_route[shn_route['AlignCode'] == 'Right']
+
+    # SPATIAL JOIN: Only pass geometry to the join to prevent column collisions!
+    snapped = gpd.sjoin_nearest(shn_route[['geometry']], group, how="inner", distance_col="snap_dist")
+    
+    # Distance Filter: Don't snap to a sensor 10 miles away
+    snapped = snapped[snapped['snap_dist'] < 3000] 
+    
+    # Clean up duplicate indices from the join
+    snapped = snapped[~snapped.index.duplicated(keep='first')]
+    
+    if not snapped.empty:
+        matched_segments.append(snapped)
+
+# Combine and save
+final_lines_gdf = gpd.GeoDataFrame(pd.concat(matched_segments), crs="EPSG:32611")
+final_lines_gdf.to_crs("EPSG:4326").to_file("REAL_LANES_SoCal_Pulse.geojson", driver='GeoJSON')
+
+print("8. Exporting Perfect GeoJSON...")
+final_export = final_lines_gdf.to_crs("EPSG:4326")
 final_export.to_file("REAL_LANES_SoCal_Pulse.geojson", driver="GeoJSON")
 
-print("\nSUCCESS! File saved as REAL_LANES_SoCal_Pulse.geojson.")
+print("\nSUCCESS! Map is now professionally aligned to true highway curves.")

@@ -1,6 +1,8 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import Dashboard from '../components/Dashboard'; 
+import PortChart from '../components/portChart';
+import CongestionChart from '../components/congestionChart';
 
 export default function StoryWrapper() {
   const [activeScene, setActiveScene] = useState(0);
@@ -73,7 +75,7 @@ export default function StoryWrapper() {
           <div className="bg-gray-900/80 backdrop-blur-md p-8 rounded-xl max-w-xl text-white border border-gray-700 shadow-2xl">
             <h2 className="text-3xl font-bold mb-4 text-blue-400">The nation's loading dock.</h2>
             <p className="text-lg leading-relaxed mb-6 text-gray-300">
-              The San Pedro Bay port complex, comprising the neighboring Ports of Los Angeles and Long Beach, is the beating heart of American trade. It processes a staggering <strong>20 million TEUs</strong> (containers) annually.
+              The San Pedro Bay port complex, comprising the neighboring Ports of Los Angeles and Long Beach, is the beating heart of American trade. It processes a staggering <strong>20 million TEUs</strong> (containers) annually. <PortChart />
             </p>
           </div>
         </div>
@@ -99,7 +101,7 @@ export default function StoryWrapper() {
           <div className="bg-gray-900/90 backdrop-blur-md p-8 rounded-xl max-w-2xl text-center text-white border border-gray-700 shadow-2xl">
             <h2 className="text-4xl font-bold mb-4 text-red-500">Commuters vs. Cargo</h2>
             <p className="text-xl leading-relaxed mb-8 text-gray-300">
-              This immense logistical engine operates on the exact same concrete infrastructure that millions of Angelenos use every day. Heavy freight traffic and passenger commuters are forced to mix, resulting in gridlock.
+              This immense logistical engine operates on the exact same concrete infrastructure that millions of Angelenos use every day. Heavy freight traffic and passenger commuters are forced to mix, resulting in gridlock.<CongestionChart />
             </p>
           </div>
         </div>

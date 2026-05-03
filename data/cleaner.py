@@ -51,7 +51,9 @@ for (rte, cnty), group in aadt.groupby(['RTE_str', 'CNTY']):
 combined_data = pd.concat(final_list)
 
 # 4. Calculate your Project Metrics
-combined_data['freight_ratio'] = combined_data['TOT_TRK_AADT'] / combined_data['AHEAD_AADT']
+combined_data['freight_ratio'] = combined_data['TOT_TRK_AADT'] / combined_data['VEHICLE_AADT_TOTAL']
+
+combined_data['freight_ratio'] = combined_data['freight_ratio'].fillna(0).clip(upper=1.0)
 
 # 5. Diagnostic Check
 match_count = combined_data['TOT_TRK_AADT'].notna().sum()

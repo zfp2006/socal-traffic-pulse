@@ -48,7 +48,6 @@ env/
 
 # Ignore massive raw data and cache files (CRITICAL for GitHub!)
 OSM_Freeways_Cache.geojson
-REAL_LANES_SoCal_Pulse.geojson
 Annual_Average_Daily_Traffic.csv
 Truck__Average_Daily_Traffic.csv
 socal_traffic_combined.csv
